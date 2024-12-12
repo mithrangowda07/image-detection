@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-from inference import get_model
+from roboflow import Roboflow
 import supervision as sv
 from PIL import Image
 
@@ -11,7 +11,10 @@ API_KEY = "1ltDKvsfussmyodmsX8e"
 # Function to load the YOLO model
 @st.cache_resource
 def load_model():
-    return get_model(model_id="kitchenhygiene/2", api_key=API_KEY)
+    rf = Roboflow(api_key=API_KEY)
+    project = rf.workspace().project("kitchenhygiene")
+    model = project.version(2).model
+    return model
 
 # Load the model
 model = load_model()
@@ -19,54 +22,49 @@ model = load_model()
 # Streamlit UI
 st.title("Kitchen Hygiene Monitor")
 
-#sidebar
+# Sidebar
 st.sidebar.title("Kitchen Hygiene Monitor")
 st.sidebar.subheader("The following Annotations can be Recognized in the Analysis")
-list1 = ["Apron","Cockroach","Gloves","Hairnet","lizard","No apron","No gloves","No hairnet","Rat"]
+list1 = ["Apron", "Cockroach", "Gloves", "Hairnet", "Lizard", "No apron", "No gloves", "No hairnet", "Rat"]
 for idx, item in enumerate(list1, start=1):
     st.sidebar.write(f"{idx}. {item}")
 
-# File uploader for the user to upload an image
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+# File uploader or webcam
+st.subheader("Upload an image or use the live webcam")
+option = st.radio("Choose an input source:", ("Upload Image", "Live Webcam"))
 
-if uploaded_file is not None:
-    # Convert uploaded file to an OpenCV image
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+if option == "Upload Image":
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-    # Run inference
-    results = model.infer(image)[0]
+    if uploaded_file is not None:
+        # Convert uploaded file to an OpenCV image
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-    # Process detections
-    detections = sv.Detections.from_inference(results)
+        # Run inference
+        results = model.predict(image)
+        detections = sv.Detections.from_roboflow(results)
 
-    # Create annotators
-    bounding_box_annotator = sv.BoxAnnotator(thickness=2)  # Only thickness is used
-    label_annotator = sv.LabelAnnotator()
+        # Annotate and display
+        annotated_image = sv.annotate_image(image, detections)
+        st.image(annotated_image, caption="Annotated Image", use_column_width=True)
 
-    # Annotate the image
-    annotated_image = bounding_box_annotator.annotate(
-        scene=image, detections=detections
-    )
-    annotated_image = label_annotator.annotate(
-        scene=annotated_image, detections=detections
-    )
+elif option == "Live Webcam":
+    st.write("Live Webcam Stream (Press 'Stop' to end the session)")
+    cap = cv2.VideoCapture(0)
+    run_webcam = st.checkbox("Start Webcam")
+    video_placeholder = st.empty()
 
-    # Save the high-quality image
-    high_quality_output_path = "annotated_image.png"
-    cv2.imwrite(high_quality_output_path, annotated_image)
+    while run_webcam:
+        ret, frame = cap.read()
+        if not ret:
+            st.error("Failed to capture video. Please ensure your webcam is connected.")
+            break
 
-    # Convert OpenCV image (BGR) to RGB for Streamlit display
-    annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+        results = model.predict(frame)
+        detections = sv.Detections.from_roboflow(results)
 
-    # Display the annotated image in its original resolution
-    st.image(annotated_image_rgb, caption="Annotated Image (High Quality)", use_column_width=True)
+        annotated_frame = sv.annotate_image(frame, detections)
+        video_placeholder.image(annotated_frame, channels="RGB", use_column_width=True)
 
-    # Provide a download link for the high-quality image
-    with open(high_quality_output_path, "rb") as file:
-        st.download_button(
-            label="Download Annotated Image",
-            data=file,
-            file_name="annotated_image.png",
-            mime="image/png"
-        )
+    cap.release()
