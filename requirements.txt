@@ -1,5 +1,5 @@
+roboflow
 opencv-python-headless
 numpy
-roboflow
 supervision
 Pillow
