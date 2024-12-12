@@ -16,6 +16,34 @@ def load_model():
     model = project.version(2).model
     return model
 
+# Function to convert Roboflow predictions to Supervision Detections
+def convert_predictions_to_detections(predictions):
+    # Extract bounding boxes, confidences, and class names
+    boxes = []
+    confidences = []
+    class_ids = []
+    for prediction in predictions:
+        x, y, width, height = (
+            prediction["x"] - prediction["width"] / 2,
+            prediction["y"] - prediction["height"] / 2,
+            prediction["width"],
+            prediction["height"],
+        )
+        boxes.append([x, y, width, height])
+        confidences.append(prediction["confidence"])
+        class_ids.append(prediction["class"])
+
+    # Convert to numpy arrays
+    boxes = np.array(boxes, dtype=np.float32)
+    confidences = np.array(confidences, dtype=np.float32)
+    class_ids = np.array(class_ids)
+
+    return sv.Detections(
+        xywh=boxes,
+        confidence=confidences,
+        class_id=class_ids
+    )
+
 # Load the model
 model = load_model()
 
@@ -42,11 +70,12 @@ if option == "Upload Image":
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         # Run inference
-        results = model.predict(image)
-        detections = sv.Detections.from_roboflow(results)
+        results = model.predict(image, confidence=40, overlap=30)
+        detections = convert_predictions_to_detections(results["predictions"])
 
         # Annotate and display
-        annotated_image = sv.annotate_image(image, detections)
+        box_annotator = sv.BoxAnnotator()
+        annotated_image = box_annotator.annotate(scene=image, detections=detections)
         st.image(annotated_image, caption="Annotated Image", use_column_width=True)
 
 elif option == "Live Webcam":
@@ -61,10 +90,12 @@ elif option == "Live Webcam":
             st.error("Failed to capture video. Please ensure your webcam is connected.")
             break
 
-        results = model.predict(frame)
-        detections = sv.Detections.from_roboflow(results)
+        results = model.predict(frame, confidence=40, overlap=30)
+        detections = convert_predictions_to_detections(results["predictions"])
 
-        annotated_frame = sv.annotate_image(frame, detections)
+        box_annotator = sv.BoxAnnotator()
+        annotated_frame = box_annotator.annotate(scene=frame, detections=detections)
         video_placeholder.image(annotated_frame, channels="RGB", use_column_width=True)
 
     cap.release()
+
